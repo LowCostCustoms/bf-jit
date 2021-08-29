@@ -14,66 +14,36 @@ namespace cli
 {
 namespace detail
 {
-template <typename T> struct IsOptional
-{
-    static constexpr inline bool Value = false;
-};
-
-template <typename T> struct IsOptional<std::optional<T>>
-{
-    static constexpr inline bool Value = true;
-};
-
 template <typename Type> struct ArgumentState
 {
     using ArgumentType = Type;
 
     ArgumentType &Argument;
-    bool Processed;
+    Boolean IsProcessed;
 };
 
-inline void SetValue(String &target, const StringRef &source)
+template <typename Argument> void PostProcessArgument(const ArgumentState<Argument> &state)
 {
-    target = source;
-}
+    if (!state.IsProcessed && state.Argument.DefaultValue) {
+        state.Argument.Value = state.Argument.Parser(*state.Argument.DefaultValue);
+        return;
+    }
 
-inline void SetValue(UInt32 &target, const StringRef &source)
-{
-    const auto first = source.data();
-    const auto last = first + source.size();
-    if (std::from_chars(first, last, target).ec != std::errc())
+    if (state.Argument.IsRequired && !state.IsProcessed)
     {
-        throw Exception::Formatted("failed to convert value `{}` into uint32", source);
+        throw Exception::Formatted("missing command line argument `{}`", state.Argument.Name);
     }
 }
 
-template <typename T> inline void SetValue(std::optional<T> &target, const StringRef &source)
+template <typename... States> void PostProcessArguments(const std::tuple<States...> &states)
 {
-    SetValue(target.emplace(), source);
-}
-
-template <typename Argument> void ValidateArgument(const ArgumentState<Argument> &state)
-{
-    using ValueType = typename Argument::ValueType;
-
-    if constexpr (!IsOptional<ValueType>::Value)
-    {
-        if (!state.Processed)
-        {
-            throw Exception::Formatted("missing command line argument {}", state.Argument.Name);
-        }
-    }
-}
-
-template <typename... States> void ValidateArguments(const std::tuple<States...> &states)
-{
-    const auto ValidateArgumentsImpl = [](const auto &...states) { (ValidateArgument(states), ...); };
-    std::apply(ValidateArgumentsImpl, states);
+    const auto PostProcessImpl = [](const auto &...states) { (PostProcessArgument(states), ...); };
+    std::apply(PostProcessImpl, states);
 }
 
 template <typename... Arguments> auto CreateStates(Arguments &...arguments)
 {
-    const auto CreateState = [](auto &argument) { return ArgumentState{.Argument = argument, .Processed = false}; };
+    const auto CreateState = [](auto &argument) { return ArgumentState{.Argument = argument, .IsProcessed = false}; };
     return std::make_tuple(CreateState(arguments)...);
 }
 
@@ -81,15 +51,15 @@ template <typename Iterator, typename... States>
 void ParseArguments(Iterator first, Iterator last, std::tuple<States...> &states)
 {
     auto ParseOption = [&](const StringRef &currentArgument, auto &state) -> bool {
-        if (!state.Processed && !state.Argument.Name.empty() && state.Argument.Name == currentArgument)
+        if (!state.IsProcessed && !state.Argument.Name.empty() && state.Argument.Name == currentArgument)
         {
-            if (++first == last)
+            if (first == last)
             {
-                throw Exception::Formatted("missing command line argument value {}", state.Argument.Name);
+                throw Exception::Formatted("missing command line argument value `{}`", state.Argument.Name);
             }
 
-            state.Processed = true;
-            SetValue(state.Argument.Value, *first++);
+            state.IsProcessed = true;
+            state.Argument.Value = state.Argument.Parser(StringRef(*first++));
 
             return true;
         }
@@ -98,10 +68,10 @@ void ParseArguments(Iterator first, Iterator last, std::tuple<States...> &states
     };
 
     auto ParseArgument = [](const StringRef &currentArgument, auto &state) -> bool {
-        if (!state.Processed && state.Argument.Name.empty())
+        if (!state.IsProcessed && state.Argument.Name.empty())
         {
-            state.Processed = true;
-            SetValue(state.Argument.Value, currentArgument);
+            state.IsProcessed = true;
+            state.Argument.Value = state.Argument.Parser(currentArgument);
             return true;
         }
 
@@ -116,7 +86,7 @@ void ParseArguments(Iterator first, Iterator last, std::tuple<States...> &states
             {
                 if (currentArgument.starts_with("-"))
                 {
-                    throw Exception::Formatted("unsupported argument {}", currentArgument);
+                    throw Exception::Formatted("unsupported argument `{}`", currentArgument);
                 }
 
                 return (ParseArgument(currentArgument, states) || ...);
@@ -127,25 +97,76 @@ void ParseArguments(Iterator first, Iterator last, std::tuple<States...> &states
 
         if (!std::apply(ParseArgumentsImpl, states))
         {
-            throw Exception::Formatted("unexpected command line argument {}", *first);
+            throw Exception::Formatted("unexpected command line argument `{}`", currentArgument);
         }
     }
 }
 } // namespace detail
 
-template <typename Type> struct Argument
+template <typename T> struct DefaultParser;
+
+template <> struct DefaultParser<String>
+{
+    String operator()(const StringRef &value) const
+    {
+        return String(value);
+    }
+};
+
+template <> struct DefaultParser<UInt32>
+{
+    UInt32 operator()(const StringRef &value) const
+    {
+        UInt32 result = 0;
+        const auto first = value.data();
+        const auto last = first + value.size();
+        if (std::from_chars(first, last, result).ec != std::errc())
+        {
+            throw Exception::Formatted("failed to parse `{}` to uint32", value);
+        }
+
+        return result;
+    }
+};
+
+template <typename Type, typename Parser_ = DefaultParser<Type>> struct Argument
 {
     using ValueType = Type;
+    using ParserType = Parser_;
+    using SelfType = Argument<Type, Parser_>;
 
     StringRef Name;
+    Optional<StringRef> Description;
+    Optional<StringRef> DefaultValue;
+    Boolean IsRequired = false;
     ValueType &Value;
+    ParserType Parser;
 
-    explicit Argument(ValueType &value) noexcept : Value(value)
+    explicit Argument(ValueType &value, const ParserType &parser = ParserType()) noexcept : Value(value)
     {
     }
 
-    explicit Argument(const StringRef &name, ValueType &value) noexcept : Name(name), Value(value)
+    SelfType &WithName(const StringRef &name) noexcept
     {
+        Name = name;
+        return *this;
+    }
+
+    SelfType &WithDescription(const StringRef &description) noexcept
+    {
+        Description = description;
+        return *this;
+    }
+
+    SelfType &Required() noexcept
+    {
+        IsRequired = true;
+        return *this;
+    }
+
+    SelfType &WithDefaultValue(const StringRef &value) noexcept {
+        DefaultValue = value;
+        return *this;
     }
 };
 
@@ -154,7 +175,7 @@ void ParseArguments(Iterator first, Iterator last, Arguments &&...arguments)
 {
     auto states = detail::CreateStates(arguments...);
     detail::ParseArguments(first, last, states);
-    detail::ValidateArguments(states);
+    detail::PostProcessArguments(states);
 }
 } // namespace cli
 } // namespace bfjit

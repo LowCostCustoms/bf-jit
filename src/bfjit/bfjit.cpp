@@ -13,7 +13,7 @@ using namespace bfjit;
 struct Arguments
 {
     String FileName;
-    Optional<UInt32> HeapSize = 1 << 20;
+    UInt32 HeapSize = 1 << 20;
 };
 
 Result WriteChar(CharType c)
@@ -47,7 +47,13 @@ Result ReadChar(CharPtr target)
 template <typename Iterator> Arguments ParseArguments(Iterator first, Iterator last)
 {
     Arguments args;
-    cli::ParseArguments(first, last, cli::Argument(args.FileName), cli::Argument("--heap-size", args.HeapSize));
+    cli::ParseArguments(
+        first, last,
+        cli::Argument(args.FileName).WithDescription("The path to a file containing brainfuck sources").Required(),
+        cli::Argument(args.HeapSize)
+            .WithName("--heap-size")
+            .WithDescription("The size of heap, in bytes, available to the VM")
+            .WithDefaultValue("1048576"));
 
     return args;
 }
@@ -81,7 +87,7 @@ int main(int argc, const char **argv)
         const auto arguments = ParseArguments(argv + 1, argv + argc);
         try
         {
-            return static_cast<int>(RunFile(arguments.FileName, *arguments.HeapSize));
+            return static_cast<int>(RunFile(arguments.FileName, arguments.HeapSize));
         }
         catch (Exception &ex)
         {

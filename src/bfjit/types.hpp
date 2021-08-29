@@ -16,6 +16,7 @@ using CharPtr = CharType *;
 using String = std::string;
 using StringRef = std::string_view;
 using UInt32 = std::uint32_t;
+using Boolean = bool;
 
 template<typename T> using Optional = std::optional<T>;
 template<typename T> using Vector = std::vector<T>;
