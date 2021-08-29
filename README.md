@@ -1,6 +1,7 @@
 # BF-JIT
 
-A Brainfuck language virtual machine, which uses [MIR](https://github.com/vnmakarov/mir) JIT compiler backend.
+A poorly-documented Brainfuck language virtual machine, which uses [MIR](https://github.com/vnmakarov/mir) JIT compiler
+backend.
 
 ## Compilation
 
@@ -16,15 +17,15 @@ $ make -j9 bfjit
 
 ## Usage
 
-`bfjit [--heap-size HEAP_SIZE] <FILE_PATH>`
+`bfjit [--heap-size <HEAP_SIZE>] <FILE_PATH>`
 
-#### `FILE_PATH`
+### FILE_PATH
 
 The path to a file containing brainfuck code.
 
-#### **optional** `--heap-size`
+### HEAP_SIZE
 
-Determines the size `HEAP_SIZE`, in bytes, of heap available to the brainfuck application. 
+Determines the size of heap, in bytes, available to the brainfuck application. 
 
 ## Caveats
 
